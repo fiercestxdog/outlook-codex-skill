@@ -1,0 +1,50 @@
+{
+  "contacts": {
+    "alice.chen@co.com": {
+      "name": "Alice Chen",
+      "title": "Sr. Systems Engineer",
+      "aliases": ["Alice", "Alice Chen"],
+      "notes": "CDR lead"
+    },
+    "bob.kim@co.com": {
+      "name": "Bob Kim",
+      "title": "Systems Engineer",
+      "aliases": ["Bob", "Bob Kim"],
+      "notes": ""
+    },
+    "carol.jones@co.com": {
+      "name": "Carol Jones",
+      "title": "Program Manager",
+      "aliases": ["Carol", "PM Carol"],
+      "notes": "Program lead for CNI"
+    },
+    "dave.wu@co.com": {
+      "name": "Dave Wu",
+      "title": "Lead Systems Engineer",
+      "aliases": ["Dave"],
+      "notes": "Peer lead on BACN program"
+    },
+    "manager@co.com": {
+      "name": "Jane Director",
+      "title": "Director of Engineering",
+      "aliases": ["Jane", "boss", "my boss"],
+      "notes": ""
+    }
+  },
+  "groups": {
+    "direct_reports": ["alice.chen@co.com", "bob.kim@co.com"],
+    "supervisors":    ["manager@co.com"],
+    "peers":          ["dave.wu@co.com"],
+    "program_leads":  ["carol.jones@co.com"]
+  },
+  "natural_language": {
+    "my team":    "direct_reports",
+    "the team":   "direct_reports",
+    "boss":       "supervisors",
+    "my boss":    "supervisors",
+    "manager":    "supervisors",
+    "my manager": "supervisors",
+    "leads":      "program_leads",
+    "pm":         "program_leads"
+  }
+}

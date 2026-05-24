@@ -1,0 +1,27 @@
+{
+  "contacts": {
+    "FILL_IN@company.com": {
+      "name": "FILL IN — Direct Report 1",
+      "title": "Systems Engineer",
+      "aliases": [],
+      "notes": ""
+    }
+  },
+  "groups": {
+    "direct_reports": [],
+    "supervisors": [],
+    "peers": [],
+    "program_leads": []
+  },
+  "natural_language": {
+    "my team": "direct_reports",
+    "the team": "direct_reports",
+    "boss": "supervisors",
+    "my boss": "supervisors",
+    "manager": "supervisors",
+    "my manager": "supervisors",
+    "skip": "supervisors",
+    "leads": "program_leads",
+    "pm": "program_leads"
+  }
+}
