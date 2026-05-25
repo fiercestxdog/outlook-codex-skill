@@ -1,6 +1,6 @@
 """
-outlook_helpers.py
-------------------
+outlook_helpers.py  (v2)
+------------------------
 Read Outlook mail and calendar via the local desktop client (COM automation).
 
 Why COM: it drives the Outlook app already running and authenticated on your
@@ -11,12 +11,31 @@ and Outlook must be installed (running is best).
 All functions return plain JSON-serializable dicts/lists so they can be piped
 straight into a Codex/Claude skill (weekly brief, action-item extraction, etc.).
 
-Dependency:
-    pip install pywin32
+⚠️  CLASSIC OUTLOOK ONLY
+    This module uses pywin32 COM automation, which works with Classic Outlook
+    (the legacy Win32 app, version numbers 14.x–16.x). The new "One Outlook"
+    web-based app shipped as the Windows 11 default since late 2024 does NOT
+    support COM — all Dispatch() calls will silently fail or raise. If commands
+    return nothing or crash, verify Classic Outlook is installed and active:
+        Outlook → Settings → "Try the new Outlook" toggle must be OFF.
+    Classic Outlook M365 remains supported; this code has a sunset dependency
+    on Microsoft eventually forcing the migration to New Outlook.
 
-Locale note: Outlook's Restrict() date filters use your Windows short-date/time
-format. The strftime patterns below assume US locale ("%m/%d/%Y %I:%M %p"). If
-filters return nothing, that's the first thing to adjust.
+⚠️  SECURITY POPUP (Outlook 365, post-Oct 2024)
+    Microsoft re-enabled programmatic-access prompts ("A program is trying to
+    send an email on your behalf"). The old registry bypass no longer suppresses
+    it on M365. Workarounds:
+      1. Antivirus exception for python.exe (simplest for personal use).
+      2. Domain GPO: HKLM\\...\\Office\\16.0\\Outlook\\Security\\ObjectModelGuard=0.
+      3. Move send/draft to Microsoft Graph (OAuth) for fully unattended use.
+
+Dependency:
+    pip install pywin32>=306
+
+Locale note: Outlook's Restrict() date filters must match the Windows system
+locale's short date/time format. _DATE_FMT below is the US locale pattern
+("%m/%d/%Y %I:%M %p"). On non-US Windows, call _detect_date_fmt() at startup
+to get the correct pattern; mismatched formats silently return zero results.
 """
 
 from __future__ import annotations
@@ -44,13 +63,107 @@ OL_OPTIONAL = 2
 # Busy status (OlBusyStatus)
 _BUSY = {"free": 0, "tentative": 1, "busy": 2, "oof": 3, "elsewhere": 4}
 
-_DATE_FMT = "%m/%d/%Y %I:%M %p"
+_DATE_FMT = "%m/%d/%Y %I:%M %p"   # US locale — see _detect_date_fmt() below
+
+
+def _detect_date_fmt() -> str:
+    """Derive the Outlook-compatible Restrict() date format from the Windows
+    locale. Falls back to US format. Call once at startup if you see calendar
+    filters returning 0 results on a non-US machine.
+
+    Usage (one-time diagnostic):
+        python -c "import outlook_helpers; print(outlook_helpers._detect_date_fmt())"
+    If the result differs from '%m/%d/%Y %I:%M %p', set _DATE_FMT to the
+    returned value before making any Restrict() calls.
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        # LOCALE_USER_DEFAULT = 0x0400
+        LOCALE_SSHORTDATE = 0x001F
+        LOCALE_STIMEFORMAT = 0x1003
+        buf = ctypes.create_unicode_buffer(80)
+
+        def get_fmt(lc_type: int) -> str:
+            ctypes.windll.kernel32.GetLocaleInfoW(0x0400, lc_type, buf, len(buf))
+            raw = buf.value  # e.g. "M/d/yyyy" or "d/MM/yyyy"
+            # Map Windows locale picture tokens → strftime directives
+            token_map = [
+                ("dddd", "%A"), ("ddd", "%a"), ("dd", "%d"), ("d", "%-d"),
+                ("MMMM", "%B"), ("MMM", "%b"), ("MM", "%m"), ("M", "%-m"),
+                ("yyyy", "%Y"), ("yy", "%y"),
+                ("HH", "%H"), ("H", "%-H"),
+                ("hh", "%I"), ("h", "%-I"),
+                ("mm", "%M"),  # minutes (must come after MM=month)
+                ("ss", "%S"),
+                ("tt", "%p"),
+            ]
+            result = raw
+            for token, directive in token_map:
+                result = result.replace(token, directive)
+            return result
+
+        date_part = get_fmt(LOCALE_SSHORTDATE)
+        time_part = get_fmt(LOCALE_STIMEFORMAT)
+        return f"{date_part} {time_part}"
+    except Exception:
+        return _DATE_FMT   # safe fallback
+
+
+# --------------------------------------------------------------------------- #
+# COM apartment initialization
+# --------------------------------------------------------------------------- #
+# Initialize COM for the main thread once at import time and uninitialize on
+# exit. This is safer than calling CoInitialize() inside _application() on
+# every call: repeated CoInitialize() calls on the same thread are harmless
+# (COM reference-counts them), but they leak if CoUninitialize() is never
+# paired — which matters if this module is loaded into a long-running process
+# (web server, task queue, background service).
+#
+# THREAD NOTE: If you call any helper function from a *worker thread*, you must
+# call pythoncom.CoInitialize() at the start of that thread and
+# pythoncom.CoUninitialize() when the thread exits. The main-thread
+# initialization below does NOT cover worker threads.
+import atexit as _atexit
+pythoncom.CoInitialize()
+_atexit.register(pythoncom.CoUninitialize)
+
+
+def _check_classic_outlook() -> None:
+    """Raise a clear RuntimeError if the running Outlook is the new web-based
+    app (COM-incompatible) or if Outlook is not running at all.
+
+    Classic Outlook reports a version string like "16.0.xxxxx.xxxxx".
+    New Outlook either raises on Dispatch or returns a version that doesn't
+    start with a known major number (14 = 2010, 15 = 2013, 16 = 2016/365).
+    """
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ver: str = getattr(app, "Version", "") or ""
+    except Exception as exc:
+        raise RuntimeError(
+            "Outlook COM is unavailable. Is Classic Outlook installed and running?\n"
+            "New Outlook (the Windows 11 default) does not support COM automation.\n"
+            f"  Original error: {exc}"
+        ) from exc
+
+    major = ver.split(".")[0] if ver else ""
+    if major not in {"14", "15", "16"}:
+        raise RuntimeError(
+            f"Outlook version '{ver}' is not Classic Outlook.\n"
+            "New Outlook does not support COM automation.\n"
+            "Fix: Outlook → Settings → turn off 'Try the new Outlook'."
+        )
 
 
 def _application():
-    """Return the Outlook.Application object. CoInitialize makes this safe to
-    call from a worker thread (e.g. when a skill runs helpers off-thread)."""
-    pythoncom.CoInitialize()
+    """Return the Outlook.Application COM object.
+
+    Raises RuntimeError with an actionable message if Classic Outlook is not
+    available (New Outlook detected, Outlook not running, COM failure).
+    """
+    _check_classic_outlook()
     return win32com.client.Dispatch("Outlook.Application")
 
 
@@ -199,15 +312,23 @@ def _smtp_address(msg) -> str | None:
 def get_calendar_events(days_ahead: int = 7, days_back: int = 0) -> list[dict]:
     """Return appointments in [now - days_back, now + days_ahead].
 
-    Recurring events are expanded into individual instances. The Sort +
-    IncludeRecurrences + Restrict order below is required by Outlook -- get it
-    wrong and recurring meetings silently disappear or you loop forever.
+    Recurring events are expanded into individual instances.
+
+    ⚠️  MANDATORY ORDER — do not reorder these three lines:
+        1. items.Sort("[Start]")          ← must sort by [Start], no other field
+        2. items.IncludeRecurrences = True ← must be set AFTER Sort
+        3. items.Restrict(filter)          ← must be called AFTER IncludeRecurrences
+
+    Breaking this order causes Outlook to either silently drop all recurring
+    events, return a raw master-recurrence item instead of instances, or loop
+    infinitely on some Outlook 365 builds. This is undocumented behavior that
+    was reverse-engineered from MSKB articles — treat it as immutable.
     """
     ns = _namespace()
     cal = ns.GetDefaultFolder(OL_FOLDER_CALENDAR)
     items = cal.Items
-    items.Sort("[Start]")
-    items.IncludeRecurrences = True  # must be set AFTER Sort, BEFORE Restrict
+    items.Sort("[Start]")              # Step 1: sort by Start — REQUIRED first
+    items.IncludeRecurrences = True    # Step 2: expand recurrences — AFTER Sort
 
     start = dt.datetime.now() - dt.timedelta(days=days_back)
     end = dt.datetime.now() + dt.timedelta(days=days_ahead)
@@ -215,7 +336,7 @@ def get_calendar_events(days_ahead: int = 7, days_back: int = 0) -> list[dict]:
         f"[Start] >= '{start.strftime(_DATE_FMT)}' "
         f"AND [Start] <= '{end.strftime(_DATE_FMT)}'"
     )
-    restricted = items.Restrict(restriction)
+    restricted = items.Restrict(restriction)   # Step 3: filter — AFTER IncludeRecurrences
 
     out: list[dict] = []
     for appt in restricted:
