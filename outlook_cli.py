@@ -22,6 +22,8 @@ import json
 import os
 import sys
 
+__version__ = "2.0.0"
+
 # ---------------------------------------------------------------------------
 # Mock injection: set OUTLOOK_MOCK=1 to use the in-memory stub instead of
 # the real COM bridge.  Enables full test coverage without Outlook running.

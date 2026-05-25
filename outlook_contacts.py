@@ -37,6 +37,8 @@ Install:
     No install required.
 """
 
+__version__ = "2.0.0"
+
 from __future__ import annotations
 
 import json

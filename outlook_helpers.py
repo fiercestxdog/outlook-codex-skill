@@ -47,6 +47,8 @@ from typing import Any
 import pythoncom
 import win32com.client
 
+__version__ = "2.0.0"
+
 # Outlook default-folder enum (OlDefaultFolders)
 OL_FOLDER_INBOX = 6
 OL_FOLDER_CALENDAR = 9
